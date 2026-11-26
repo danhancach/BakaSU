@@ -33,15 +33,16 @@ struct sdesc {
 
 static apk_sign_key_t apk_sign_keys[] = {
     { EXPECTED_SIZE_BAKASU, EXPECTED_HASH_BAKASU }, /* Baka-SU/BakaSU */
+    /* Custom (vd. APK local ky Android Debug) — khong can MULTI_MANAGER */
+#ifdef EXPECTED_SIZE
+    { EXPECTED_SIZE, EXPECTED_HASH },
+#endif
+#ifdef EXPECTED_PR_BUILD_SIZE
+    { EXPECTED_PR_BUILD_SIZE, EXPECTED_PR_BUILD_HASH },
+#endif
 #ifdef CONFIG_KSU_MULTI_MANAGER_SUPPORT
     { EXPECTED_SIZE_OFFICIAL, EXPECTED_HASH_OFFICIAL }, // tiann/KernelSU
     { EXPECTED_SIZE_KOWX712, EXPECTED_HASH_KOWX712 }, // KOWX712/KernelSU
-#ifdef EXPECTED_SIZE
-    { EXPECTED_SIZE, EXPECTED_HASH }, // Custom
-#endif
-#ifdef EXPECTED_PR_BUILD_SIZE
-    { EXPECTED_PR_BUILD_SIZE, EXPECTED_PR_BUILD_HASH }, // Custom 2 (For PR build)
-#endif
 #endif
 };
 
@@ -134,49 +135,63 @@ static bool check_block(struct file *fp, loff_t *pos, loff_t block_end, u8 *matc
     if (certificate_size > INT_MAX || certificate_size > (u64)(certificates_end - *pos))
         return false;
 
-#define CERT_MAX_LENGTH 1024
-    if (certificate_size > CERT_MAX_LENGTH) {
+    /* Gioi han cu 1024 byte: platform cert ROM (vd. 1041..1196) bi loai.
+     * Cap tren 4096 + kmalloc — khong phinh stack kernel. Van giu kiem
+     * tra bien APK Signing Block / DER / SHA-256 o tren va ben duoi.
+     */
+#define CERT_MAX_LENGTH 4096
+    if (certificate_size == 0 || certificate_size > CERT_MAX_LENGTH) {
         pr_info("cert length overlimit\n");
         return false;
     }
 
-    char cert[CERT_MAX_LENGTH];
-    if (!read_exact(fp, cert, certificate_size, pos, certificates_end))
-        return false;
+    {
+        u8 *cert;
+        unsigned char digest[SHA256_DIGEST_SIZE];
+        char hash_str[SHA256_DIGEST_SIZE * 2 + 1];
 
-    unsigned char digest[SHA256_DIGEST_SIZE];
-    if (ksu_sha256(cert, certificate_size, digest)) {
-        pr_info("sha256 error\n");
-        return false;
-    }
+        cert = kmalloc(certificate_size, GFP_KERNEL);
+        if (!cert)
+            return false;
 
-    char hash_str[SHA256_DIGEST_SIZE * 2 + 1];
-    hash_str[SHA256_DIGEST_SIZE * 2] = '\0';
-
-    bin2hex(hash_str, digest, SHA256_DIGEST_SIZE);
-    pr_info("sha256: %s\n", hash_str);
-
-    // keep 255, 254, 253 here
-    // 255 reserved for dynamic manager
-    // 254 reserved for ksu debug
-    // 253 reserved for ksu toolkit
-    BUILD_BUG_ON(ARRAY_SIZE(apk_sign_keys) >= 253);
-    for (i = 0; i < ARRAY_SIZE(apk_sign_keys); i++) {
-        sign_key = apk_sign_keys[i];
-        if (certificate_size == sign_key.size && strcmp(sign_key.sha256, hash_str) == 0) {
-            if (matched_index)
-                *matched_index = i;
-            signature_valid = true;
-            break;
+        if (!read_exact(fp, cert, certificate_size, pos, certificates_end)) {
+            kfree(cert);
+            return false;
         }
-    }
 
-    if (!signature_valid && ksu_is_dynamic_manager_enabled()) {
-        sign_key = ksu_get_dynamic_manager_sign();
-        if (certificate_size == sign_key.size && strcmp(sign_key.sha256, hash_str) == 0) {
-            if (matched_index)
-                *matched_index = KSU_SIGNATURE_INDEX_DYNAMIC_MANAGER;
-            signature_valid = true;
+        if (ksu_sha256(cert, certificate_size, digest)) {
+            pr_info("sha256 error\n");
+            kfree(cert);
+            return false;
+        }
+        kfree(cert);
+
+        hash_str[SHA256_DIGEST_SIZE * 2] = '\0';
+        bin2hex(hash_str, digest, SHA256_DIGEST_SIZE);
+        pr_info("sha256: %s\n", hash_str);
+
+        // keep 255, 254, 253 here
+        // 255 reserved for dynamic manager
+        // 254 reserved for ksu debug
+        // 253 reserved for ksu toolkit
+        BUILD_BUG_ON(ARRAY_SIZE(apk_sign_keys) >= 253);
+        for (i = 0; i < ARRAY_SIZE(apk_sign_keys); i++) {
+            sign_key = apk_sign_keys[i];
+            if (certificate_size == sign_key.size && strcmp(sign_key.sha256, hash_str) == 0) {
+                if (matched_index)
+                    *matched_index = i;
+                signature_valid = true;
+                break;
+            }
+        }
+
+        if (!signature_valid && ksu_is_dynamic_manager_enabled()) {
+            sign_key = ksu_get_dynamic_manager_sign();
+            if (certificate_size == sign_key.size && strcmp(sign_key.sha256, hash_str) == 0) {
+                if (matched_index)
+                    *matched_index = KSU_SIGNATURE_INDEX_DYNAMIC_MANAGER;
+                signature_valid = true;
+            }
         }
     }
     return signature_valid;
