@@ -319,6 +319,22 @@ retry:
     ksu_allow(db, "domain", KERNEL_SU_DOMAIN, "unix_stream_socket", "getopt");
     ksu_allow(db, "domain", KERNEL_SU_DOMAIN, "unix_stream_socket", "getattr");
 
+    /* Manager ky platform key chay domain platform_app; libsu can mkfifo
+     * trong app_data_file (untrusted_app co san, platform_app khong).
+     */
+    ksu_allow(db, "platform_app", "app_data_file", "fifo_file", "create");
+    ksu_allow(db, "platform_app", "app_data_file", "fifo_file", "open");
+    ksu_allow(db, "platform_app", "app_data_file", "fifo_file", "read");
+    ksu_allow(db, "platform_app", "app_data_file", "fifo_file", "write");
+    ksu_allow(db, "platform_app", "app_data_file", "fifo_file", "getattr");
+    ksu_allow(db, "platform_app", "app_data_file", "fifo_file", "setattr");
+    ksu_allow(db, "platform_app", "app_data_file", "fifo_file", "unlink");
+    ksu_allow(db, "platform_app", "app_data_file", "fifo_file", "rename");
+    ksu_allow(db, "platform_app", "app_data_file", "dir", "search");
+    ksu_allow(db, "platform_app", "app_data_file", "dir", "write");
+    ksu_allow(db, "platform_app", "app_data_file", "dir", "add_name");
+    ksu_allow(db, "platform_app", "app_data_file", "dir", "remove_name");
+
     // use memfd created by su domain
     ksu_allow(db, "domain", KERNEL_SU_DOMAIN, "memfd_file", "execute");
     ksu_allow(db, "domain", KERNEL_SU_DOMAIN, "memfd_file", "getattr");
